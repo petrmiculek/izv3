@@ -121,6 +121,8 @@ max_age = 30
 
 
 def plot_age_total(df: pd.DataFrame, fig_location: str = None, show_figure: bool = False):
+    """Vykreslení celkového zastoupení stáří havarovaných vozidel"""
+
     global max_age
     x, y = np.unique(df['stari'], return_counts=True)
 
@@ -149,6 +151,8 @@ def plot_age_total(df: pd.DataFrame, fig_location: str = None, show_figure: bool
 
 
 def plot_age_yearly(df: pd.DataFrame, fig_location: str = None, show_figure: bool = False):
+    """Vykreslení meziročního srovnání zastoupení stáří havarovaných vozidel"""
+
     global max_age
 
     fig = plt.figure(figsize=(6, 4))
@@ -161,10 +165,10 @@ def plot_age_yearly(df: pd.DataFrame, fig_location: str = None, show_figure: boo
     ax.get_legend().set_title('rok nehody')
     ax.set_xlim(left=0, right=max_age)
     ax.set_ylim(bottom=0)
-    ax.set_title('Zastoupení stáří havarovaných vozidel dle roků')
+    ax.set_title('Meziroční srovnání stáří vozidel')
     ax.yaxis.set_major_formatter('{x:#.1n}%')  # n-formátování respektuje Locale nastavení
     ax.set_xlabel('stáří vozidla [let]')
-    ax.set_ylabel('podíl na celkovém počtu nehod [%]')
+    ax.set_ylabel('podíl na nehodách v daném roce [%]')
     fig.tight_layout()
     fig.show()
     fig.subplots_adjust(left=0.15)
@@ -180,6 +184,8 @@ def plot_age_yearly(df: pd.DataFrame, fig_location: str = None, show_figure: boo
 
 
 def plot_brands_total(df: pd.DataFrame, fig_location: str = None, show_figure: bool = False):
+    """Vykreslení TOP k nejpopulárnějších značek"""
+
     count_total = len(df.index)
     brands = df.groupby(['znacka']) \
         .aggregate({'znacka': 'count'}) \
@@ -187,7 +193,7 @@ def plot_brands_total(df: pd.DataFrame, fig_location: str = None, show_figure: b
         .sort_values(by='pocet', ascending=False)
 
     for i in [0, 98, 99]:
-        # odstraneni zaznamu neuvedenych znacek
+        # odstranění zaznamů neuvedených značek
         idx = brands_number_to_name[i]
         try:
             brands = brands.drop(index=idx)
@@ -199,6 +205,7 @@ def plot_brands_total(df: pd.DataFrame, fig_location: str = None, show_figure: b
 
     print('Značky jsou v {} % případů neznámé, nebo jinak nekonkrétně určené, tyto jsou dále ignorovány.' \
           .format(float(1 - count_cleaned / count_total) * 100))
+    print('V ČR jezdí (a havaruje) celkem {} značek aut.'.format(len(percentage)))
 
     # tvorba grafu
     fig = plt.figure(figsize=(6, 4))
@@ -224,61 +231,34 @@ def plot_brands_total(df: pd.DataFrame, fig_location: str = None, show_figure: b
         fig.show()
 
 
-def plot_brands_yearly(df: pd.DataFrame, fig_location: str = None, show_figure: bool = False):
-    years = df['rok_nehody'].unique()
-    for year in years:
-        df_current = df[df['rok_nehody'] == year]
+def table_brand_popularity(df: pd.DataFrame):
+    """Tabulka vývoje popularity značek v průběhu let"""
+    tb = pd.crosstab(df['rok_nehody'], df['znacka'])
 
-        brands = df_current.groupby(['znacka']) \
-            .aggregate({'znacka': 'count'}) \
-            .rename(columns={'znacka': 'pocet'}) \
-            .sort_values(by='pocet', ascending=False)
+    # normalizace popularity v letech
+    tb['sum'] = tb.sum(axis=1)
+    tbd = tb.loc[:, :].div(tb['sum'], axis=0)
+    tbd = tbd.drop(columns=['sum', 'jiné vyrobené v ČR', 'jiné vyrobené mimo ČR'])
 
-        for i in [0, 98, 99]:
-            # odstraneni zaznamu neuvedenych znacek
-            idx = brands_number_to_name[i]
-            try:
-                brands = brands.drop(index=idx)
-            except KeyError:
-                pass
+    diff = tbd.diff(axis=0)  # meziroční rozdíly v počtu aut daných značek
+    diff.loc[diff.index.values[0]] = 0  # první řádek by jinak byl NaN
 
-        count_cleaned = brands.sum()[0]
-        percentage = 100 * brands / brands.sum()
+    dt = diff.transpose()
 
-        # tvorba grafu
-        fig = plt.figure(figsize=(6, 4))
-        ax = fig.add_subplot()
+    print('TOP 3 změny popularity v daných letech (vždy oproti předchozímu roku)')
+    print('Přírůstky:')
+    for col in dt.columns[1:]:
+        print(dt.nlargest(3, col)[col].to_csv())
 
-        percentage[0:12].plot.bar(ax=ax,
-                                  legend=None,
-                                  color='#ffa600')
-
-        ax.yaxis.set_major_formatter(mtick.PercentFormatter())
-        plt.gca().set_title('TOP 12 značek ROK XXXX')
-        ax.set_xlabel('')
-        ax.xaxis.grid(False)
-        plt.tight_layout()
-
-        if fig_location:
-            d = os.path.dirname(fig_location)
-            if d and not os.path.isdir(d):
-                os.makedirs(d)
-            fig.savefig(fig_location)
-
-        if show_figure:
-            fig.show()
+    print('\nÚbytky:')
+    for col in dt.columns[1:]:
+        print(dt.nsmallest(3, col)[col].to_csv())
 
 
-if __name__ == '__main__':
-    # global style
-    sns.set_style('darkgrid')
-    sns.set_context('notebook')
+def get_dataframe():
+    """Načtení a předzpracování dat"""
 
-    """příprava dat"""
-
-    # , druh vozidla, značka, rok výroby (19xx, nebo 20xx),                         # date, gps, gps
-    df = pd.read_pickle('accidents.pkl.gz')[['p2a', 'p44', 'p45a', 'p47', 'p48a']]  # 'p1', 'd', 'e'
-    count_total = len(df.index)
+    df = pd.read_pickle('accidents.pkl.gz')[['p2a', 'p44', 'p45a', 'p47', 'p48a']]
 
     df = df.rename(columns={
         'p2a': 'rok_nehody',
@@ -287,28 +267,49 @@ if __name__ == '__main__':
         'p47': 'rok_vyroby',
         'p48a': 'vlastnik'})
 
+    # převedení kódů značek na celé názvy
     df['znacka'] = df['znacka'].map(_brands_number_to_name)  # pozor, nepoužívá defaultdict
 
+    # zúžení data na rok
     df['rok_nehody'] = df['rok_nehody'].astype('datetime64[Y]').dt.year
 
     df['rok_vyroby'] = df['rok_vyroby'].astype('int')
+
+    # neznámý rok výroby
     df = df[df['rok_vyroby'] != -1]
 
-    df.loc[df['rok_vyroby'] > 20, 'rok_vyroby'] += 1900
-    df.loc[df['rok_vyroby'] <= 20, 'rok_vyroby'] += 2000
+    # u roku výroby je v datech jen poslední dvojčíslí
+    current_year = 20
+    df.loc[df['rok_vyroby'] > current_year, 'rok_vyroby'] += 1900
+    df.loc[df['rok_vyroby'] <= current_year, 'rok_vyroby'] += 2000
 
     df['stari'] = df['rok_nehody'] - df['rok_vyroby']
-    print('Nejstarší bourané auto bylo {} let staré.'.format(df['stari'].max()))
+
+    return df
+
+
+if __name__ == '__main__':
+    # global style
+    sns.set_style('darkgrid')
+    sns.set_context('notebook')
+
+    df = get_dataframe()
+
+    # Vypočtené hodnoty
+    print('Průměrné bourané auto má {:n} let.'.format(df['stari'].mean()))
+    print('Nejstarší bourané auto bylo {:d} let staré.'.format(df['stari'].max()))
+    top_decile = pd.qcut(sorted(df['stari']), 10).categories[-1]
+    print('Vrchní decil stáří aut je tvořen auty mezi {:n} a {:n} lety.'.format(top_decile.left, top_decile.right))
 
     """tvorba grafů"""
     # TOP N značek
-    plot_brands_total(df, 'znacky_celkove.pdf', True)
+    plot_brands_total(df, 'znacky_celkove.svg', True)
 
     # Stáří aut
-    plot_age_total(df, 'stari_celkove.pdf', True)
+    plot_age_total(df, 'stari_celkove.svg', True)
 
-    plot_age_yearly(df, 'stari_v_letech.pdf', True)
+    plot_age_yearly(df, 'stari_v_letech.svg', True)
 
-    # saved
-    # sns.pairplot(data=df, hue="rok_nehody")
-    # plt.show()
+    # tabulka vývoje popularity
+    table_brand_popularity(df)
+
