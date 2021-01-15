@@ -8,12 +8,12 @@ import numpy as np
 import os
 from collections import defaultdict
 import seaborn as sns
+import locale
 
-"""
+locale.setlocale(locale.LC_ALL, locale='cs_CZ.utf8')
+# check locale availability in shell: $ locale -a
+# used to set comma as the decimal separator
 
-
-
-"""
 _brands_number_to_name = {
     # 0: 'neznama',
     1: 'ALFA-ROMEO',
@@ -117,38 +117,26 @@ _brands_number_to_name = {
     99: 'jiné vyrobené mimo ČR',
 }
 brands_number_to_name = defaultdict(lambda: 'neznama', _brands_number_to_name)
+max_age = 30
 
 
-def plot_age(df: pd.DataFrame, fig_location: str = None, show_figure: bool = False):
-    df['datum'] = df['datum'].astype('datetime64[Y]').dt.year
-    df['rok_vyroby'] = df['rok_vyroby'].astype('int')
-    df = df[df['rok_vyroby'] != -1]
-
-    count_valid_rok = len(df.index)  # 382k
-
-    df.loc[df['rok_vyroby'] > 20, 'rok_vyroby'] += 1900
-    df.loc[df['rok_vyroby'] <= 20, 'rok_vyroby'] += 2000
-
-    age = df['datum'] - df['rok_vyroby']
-
-    n = df['rok_vyroby'].unique()
-
-    x, y = np.unique(age, return_counts=True)
+def plot_age_total(df: pd.DataFrame, fig_location: str = None, show_figure: bool = False):
+    global max_age
+    x, y = np.unique(df['stari'], return_counts=True)
 
     # data stačí v tisících
     # noinspection PyAugmentAssignment
     y = y / 1000
 
-    max_age = 55
-
     fig = plt.figure(figsize=(6, 4))
-    ax = sns.lineplot(x=x[:max_age], y=y[:max_age], color='#bc5090', marker='o')
-    ax.set_title('Stáří aut [roků]')
-    ax.set_ylabel('počet aut [v tisících]')
-    ax.set_xlabel('roků')
-    ax.set_xlim(right=42)
+    ax = sns.lineplot(x=x[:max_age + 5], y=y[:max_age + 5], color='#bc5090', marker='o')
+    ax.set_title('Celkové zastoupení stáří havarovaných vozidel')
+    ax.set_ylabel('počet vozidel [tisíc]')
+    ax.set_xlabel('stáří vozidla [let]')
+    ax.set_xlim(left=0, right=max_age)
+    ax.set_ylim(bottom=0)
     fig.tight_layout()
-    fig.show()
+    fig.subplots_adjust(left=0.15)
 
     if fig_location:
         d = os.path.dirname(fig_location)
@@ -160,7 +148,38 @@ def plot_age(df: pd.DataFrame, fig_location: str = None, show_figure: bool = Fal
         fig.show()
 
 
-def plot_brands(df: pd.DataFrame, fig_location: str = None, show_figure: bool = False):
+def plot_age_yearly(df: pd.DataFrame, fig_location: str = None, show_figure: bool = False):
+    global max_age
+
+    fig = plt.figure(figsize=(6, 4))
+
+    palette = sns.color_palette(['#addd8e', '#78c679', '#41ab5d', '#238443', '#005a32'])
+    ax = sns.kdeplot(data=df[['stari', 'rok_nehody']], x='stari',
+                     hue='rok_nehody', palette=palette,
+                     common_norm=False)  # každý rok je normalizován zvlášť
+
+    ax.get_legend().set_title('rok nehody')
+    ax.set_xlim(left=0, right=max_age)
+    ax.set_ylim(bottom=0)
+    ax.set_title('Zastoupení stáří havarovaných vozidel dle roků')
+    ax.yaxis.set_major_formatter('{x:#.1n}%')  # n-formátování respektuje Locale nastavení
+    ax.set_xlabel('stáří vozidla [let]')
+    ax.set_ylabel('podíl na celkovém počtu nehod [%]')
+    fig.tight_layout()
+    fig.show()
+    fig.subplots_adjust(left=0.15)
+
+    if fig_location:
+        d = os.path.dirname(fig_location)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        fig.savefig(fig_location)
+
+    if show_figure:
+        fig.show()
+
+
+def plot_brands_total(df: pd.DataFrame, fig_location: str = None, show_figure: bool = False):
     count_total = len(df.index)
     brands = df.groupby(['znacka']) \
         .aggregate({'znacka': 'count'}) \
@@ -178,9 +197,6 @@ def plot_brands(df: pd.DataFrame, fig_location: str = None, show_figure: bool = 
     count_cleaned = brands.sum()[0]
     percentage = 100 * brands / brands.sum()
 
-    # kolacovy graf - nepouzito
-    # percentage.plot.pie(y='pocet', legend=None)
-
     print('Značky jsou v {} % případů neznámé, nebo jinak nekonkrétně určené, tyto jsou dále ignorovány.' \
           .format(float(1 - count_cleaned / count_total) * 100))
 
@@ -191,7 +207,8 @@ def plot_brands(df: pd.DataFrame, fig_location: str = None, show_figure: bool = 
     percentage[0:12].plot.bar(ax=ax,
                               legend=None,
                               color='#ffa600')
-    ax.yaxis.set_major_formatter(mtick.PercentFormatter())
+    f = mtick.FuncFormatter(lambda x, p: format(int(x)) + ' %')
+    ax.yaxis.set_major_formatter(f)
     plt.gca().set_title('TOP 12 značek')
     ax.set_xlabel('')
     ax.xaxis.grid(False)
@@ -207,22 +224,91 @@ def plot_brands(df: pd.DataFrame, fig_location: str = None, show_figure: bool = 
         fig.show()
 
 
+def plot_brands_yearly(df: pd.DataFrame, fig_location: str = None, show_figure: bool = False):
+    years = df['rok_nehody'].unique()
+    for year in years:
+        df_current = df[df['rok_nehody'] == year]
+
+        brands = df_current.groupby(['znacka']) \
+            .aggregate({'znacka': 'count'}) \
+            .rename(columns={'znacka': 'pocet'}) \
+            .sort_values(by='pocet', ascending=False)
+
+        for i in [0, 98, 99]:
+            # odstraneni zaznamu neuvedenych znacek
+            idx = brands_number_to_name[i]
+            try:
+                brands = brands.drop(index=idx)
+            except KeyError:
+                pass
+
+        count_cleaned = brands.sum()[0]
+        percentage = 100 * brands / brands.sum()
+
+        # tvorba grafu
+        fig = plt.figure(figsize=(6, 4))
+        ax = fig.add_subplot()
+
+        percentage[0:12].plot.bar(ax=ax,
+                                  legend=None,
+                                  color='#ffa600')
+
+        ax.yaxis.set_major_formatter(mtick.PercentFormatter())
+        plt.gca().set_title('TOP 12 značek ROK XXXX')
+        ax.set_xlabel('')
+        ax.xaxis.grid(False)
+        plt.tight_layout()
+
+        if fig_location:
+            d = os.path.dirname(fig_location)
+            if d and not os.path.isdir(d):
+                os.makedirs(d)
+            fig.savefig(fig_location)
+
+        if show_figure:
+            fig.show()
+
+
 if __name__ == '__main__':
     # global style
     sns.set_style('darkgrid')
     sns.set_context('notebook')
 
-    # , druh vozidla, značka, rok výroby (XX),                                      # date, gps, gps,
+    """příprava dat"""
+
+    # , druh vozidla, značka, rok výroby (19xx, nebo 20xx),                         # date, gps, gps
     df = pd.read_pickle('accidents.pkl.gz')[['p2a', 'p44', 'p45a', 'p47', 'p48a']]  # 'p1', 'd', 'e'
     count_total = len(df.index)
 
-    df = df.rename(columns={'p2a': 'datum', 'p44': 'druh', 'p45a': 'znacka', 'p47': 'rok_vyroby', 'p48a': 'vlastnik'})
+    df = df.rename(columns={
+        'p2a': 'rok_nehody',
+        'p44': 'druh',
+        'p45a': 'znacka',
+        'p47': 'rok_vyroby',
+        'p48a': 'vlastnik'})
 
-    df['znacka'] = df['znacka'].map(_brands_number_to_name)
-    # todo nakonec bez defaultdict
+    df['znacka'] = df['znacka'].map(_brands_number_to_name)  # pozor, nepoužívá defaultdict
 
+    df['rok_nehody'] = df['rok_nehody'].astype('datetime64[Y]').dt.year
+
+    df['rok_vyroby'] = df['rok_vyroby'].astype('int')
+    df = df[df['rok_vyroby'] != -1]
+
+    df.loc[df['rok_vyroby'] > 20, 'rok_vyroby'] += 1900
+    df.loc[df['rok_vyroby'] <= 20, 'rok_vyroby'] += 2000
+
+    df['stari'] = df['rok_nehody'] - df['rok_vyroby']
+    print('Nejstarší bourané auto bylo {} let staré.'.format(df['stari'].max()))
+
+    """tvorba grafů"""
     # TOP N značek
-    plot_brands(df, 'brands.pdf', True)
+    plot_brands_total(df, 'znacky_celkove.pdf', True)
 
     # Stáří aut
-    plot_age(df, 'age.pdf', True)
+    plot_age_total(df, 'stari_celkove.pdf', True)
+
+    plot_age_yearly(df, 'stari_v_letech.pdf', True)
+
+    # saved
+    # sns.pairplot(data=df, hue="rok_nehody")
+    # plt.show()
