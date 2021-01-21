@@ -104,7 +104,6 @@ def plot_cluster(gdf: geopandas.GeoDataFrame, fig_location: str = None,
         source=ctx.providers.Stamen.TonerLite,
     )
     figure.tight_layout()
-    figure.show()
 
     # vystupy grafu
     if fig_location:
